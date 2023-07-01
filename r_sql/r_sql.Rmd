@@ -1,0 +1,176 @@
+---
+title: "r_sql"
+author: "Lev Barbash"
+date: "29 06 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r construct}
+library(DBI)
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+dbWriteTable(conn, "airports", 
+             read.csv("/Users/levbarbash/LondonProg/Assignment3/airports.csv"))
+dbWriteTable(conn, "carriers", 
+             read.csv("/Users/levbarbash/LondonProg/Assignment3/carriers.csv"))
+dbWriteTable(conn, "planes", 
+             read.csv("/Users/levbarbash/LondonProg/Assignment3/plane-data.csv"))
+dbDisconnect(conn)
+```
+
+```{r ontime}
+
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+dbWriteTable(conn, "ontime", 
+             read.csv("/Users/levbarbash/LondonProg/Assignment3/2000.csv"))
+for(i in 2001:2005)
+  dbAppendTable(conn, "ontime", 
+                read.csv(paste("/Users/levbarbash/LondonProg/Assignment3/", as.character(i), ".csv", sep="")))
+dbDisconnect(conn)
+```
+Planes with the lowest average departure delay
+DBI
+```{r planes dbi}
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+q_planes <- dbGetQuery(conn, 
+"SELECT model AS model, AVG(ontime.DepDelay) AS avg_delay
+FROM planes JOIN ontime USING(tailnum)
+WHERE ontime.Cancelled = 0 AND ontime.Diverted = 0 AND ontime.DepDelay > 0
+GROUP BY model
+ORDER BY avg_delay")
+q_planes
+dbDisconnect(conn)
+```
+dplyr
+```{r planes dplyr}
+library(dplyr)
+conn <- dbConnect(RSQLite::SQLite(), "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+airports_db <- tbl(conn, "airports")
+carriers_db <- tbl(conn, "carriers")
+ontime_db <- tbl(conn, "ontime")
+planes_db <- tbl(conn, "planes")
+q_planes_dplyr <- inner_join(planes_db, ontime_db, by = join_by(tailnum == TailNum)) %>%
+  group_by(model) %>%
+  filter(Cancelled == 0 & Diverted == 0 & DepDelay > 0) %>%
+  summarize(avg_delay = mean(DepDelay, na.rm = TRUE)) %>%
+  arrange(avg_delay)
+q_planes_dplyr
+dbDisconnect(conn)
+```
+Cities with the highest number of inbound flights
+DBI
+```{r cities dbi}
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+q_cities_dplyr <- dbGetQuery(conn, 
+"SELECT airports.city AS city, COUNT(*) AS total
+FROM airports JOIN ontime ON ontime.dest = airports.iata
+WHERE ontime.Cancelled = 0
+GROUP BY airports.city
+ORDER BY total DESC")
+q_cities
+dbDisconnect(conn)
+```
+dplyr
+```{r cities dplyr}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+airports_db <- tbl(conn, "airports")
+carriers_db <- tbl(conn, "carriers")
+ontime_db <- tbl(conn, "ontime")
+planes_db <- tbl(conn, "planes")
+q_cities_dplyr <- inner_join(airports_db, ontime_db, by = join_by(iata == Dest)) %>%
+  group_by(city) %>%
+  filter(Cancelled == 0) %>%
+  summarize(total = count(iata)) %>%
+  arrange(desc(total))
+q_cities_dplyr
+dbDisconnect(conn)
+```
+Сompanies with the highest number of cancelled flights
+DBI
+```{r companies dbi}
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+q_companies <- dbGetQuery(conn, 
+"SELECT carriers.Description AS carrier, COUNT(*) AS total
+FROM carriers JOIN ontime ON ontime.UniqueCarrier = carriers.Code
+WHERE ontime.Cancelled = 1
+    AND carriers.Description IN ('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.')
+GROUP BY carriers.Description
+ORDER BY total DESC")
+q_companies
+dbDisconnect(conn)
+```
+dplyr
+```{r companies dplyr}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+airports_db <- tbl(conn, "airports")
+carriers_db <- tbl(conn, "carriers")
+ontime_db <- tbl(conn, "ontime")
+planes_db <- tbl(conn, "planes")
+q_companies_dplyr <- inner_join(carriers_db, ontime_db, by = join_by(Code == UniqueCarrier)) %>%
+  group_by(Description) %>%
+  filter(Cancelled == 1 & Description %in% c('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.')) %>%
+  summarize(total = count(Code)) %>%
+  arrange(desc(total))
+q_companies_dplyr
+dbDisconnect(conn)
+```
+Companies with the highest number of cancelled flights, relative to their number of total flights
+DBI
+```{r h_cancelled dbi}
+conn <- dbConnect(RSQLite::SQLite(), 
+                  "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+q_h_cancelled <- dbGetQuery(conn, 
+"SELECT
+    q1.carrier AS carrier, (CAST(q1.numerator AS FLOAT)/ CAST(q2.denominator AS FLOAT)) AS ratio
+FROM
+(
+SELECT carriers.Description AS carrier, COUNT(*) AS numerator
+FROM carriers JOIN ontime ON ontime.UniqueCarrier = carriers.Code
+WHERE ontime.Cancelled = 1 AND carriers.Description IN ('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.')
+GROUP BY carriers.Description
+) AS q1 JOIN
+(
+SELECT carriers.Description AS carrier, COUNT(*) AS denominator
+FROM carriers JOIN ontime ON ontime.UniqueCarrier = carriers.Code
+WHERE carriers.Description IN ('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.')
+GROUP BY carriers.Description
+) AS q2 USING(carrier)
+ORDER BY ratio DESC")
+q_h_cancelled
+dbDisconnect(conn)
+```
+dplyr
+```{r h_cancelled dplyr}
+conn <- dbConnect(RSQLite::SQLite(), "/Users/levbarbash/LondonProg/Assignment3/airline2.db")
+airports_db <- tbl(conn, "airports")
+carriers_db <- tbl(conn, "carriers")
+ontime_db <- tbl(conn, "ontime")
+planes_db <- tbl(conn, "planes")
+q1 <- carriers_db %>%
+  inner_join(ontime_db, by = c("Code" = "UniqueCarrier")) %>%
+  filter(Description %in% c('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.'), Cancelled == 1) %>%
+  group_by(Description) %>%
+  summarise(numerator = n())
+
+q2 <- carriers_db %>%
+  inner_join(ontime_db, by = c("Code" = "UniqueCarrier")) %>%
+  filter(Description %in% c('United Air Lines Inc.', 'American Airlines Inc.', 'Pinnacle Airlines Inc.', 'Delta Air Lines Inc.')) %>%
+  group_by(Description) %>%
+  summarise(denominator = n())
+
+q_h_cancelled_dplyr <- inner_join(q1, q2, by = "Description") %>%
+  mutate(ratio = as.numeric(numerator) / as.numeric(denominator)) %>%
+  select(carrier = Description, ratio) %>%
+  arrange(desc(ratio))
+q_h_cancelled_dplyr
+dbDisconnect(conn)
+```
